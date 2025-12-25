@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Downloads
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.ts
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.pdf
+*.txt
+*.zip
+*.rar
+
+# Session files
+*.session
+*.session-journal
+
+# Database
+*.db
+*.db-journal
+bot_data.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+temp_*
+thumb_*
+*_part*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Backup
+*.json
+bot_backup.json
