@@ -138,20 +138,45 @@ async def download_video_ytdlp(
             'no_warnings': True,
             'nocheckcertificate': True,
             'concurrent_fragment_downloads': MAX_WORKERS,
-            'retries': MAX_RETRIES,
-            'fragment_retries': MAX_RETRIES,
+            'retries': float('inf'),
+            'fragment_retries': 25,
+            'socket_timeout': 50,
             'buffersize': CHUNK_SIZE,
             'http_chunk_size': 10485760,
             'hls_prefer_native': True,
             'progress_hooks': [progress_hook],
             'external_downloader': 'aria2c',
-            'external_downloader_args': ['-x', '16', '-k', '1M']
+            'external_downloader_args': ['-x', '16', '-j', '32']
         }
         
         logger.info(f"🎬 Starting yt-dlp download...")
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        # Retry logic for specific domains to match reference capability
+        # "visionias" and "penpencilvod" sometimes need explicit retries
+        # Reference uses up to 10 retries with 5s sleep
+        max_external_retries = 10 if any(x in url for x in ['visionias', 'penpencilvod']) else 1
+
+        last_error = None
+        for attempt in range(max_external_retries):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+
+                # If download successful, break loop
+                last_error = None
+                break
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_external_retries - 1:
+                    logger.warning(f"⚠️ Download failed (Attempt {attempt+1}/{max_external_retries}), retrying in 5s: {e}")
+                    await asyncio.sleep(5)
+                else:
+                    logger.error(f"❌ yt-dlp error after {max_external_retries} attempts: {e}")
+
+        if last_error and not os.path.exists(output_path):
+             # If completely failed and no file, return None
+             return None
         
         # Wait for file to be fully written
         await asyncio.sleep(2)

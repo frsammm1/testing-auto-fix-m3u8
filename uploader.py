@@ -356,7 +356,7 @@ async def send_failed_link(
             f"❌ **MANUAL DOWNLOAD REQUIRED**\n\n"
             f"{emoji} **Item #{serial_num}**\n"
             f"📝 {title}\n\n"
-            f"🔗 **Link:**\n`{url}`\n\n"
+            f"🔗 **Link:**\n{url}\n\n"
             f"💡 Copy link and download manually"
         )
         
