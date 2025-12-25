@@ -102,7 +102,9 @@ async def download_video_ytdlp(
     output_path: str,
     progress_msg: Optional[Message],
     active: dict,
-    download_progress: dict
+    download_progress: dict,
+    quality: str = None,
+    extra_headers: dict = None
 ) -> Optional[str]:
     """
     Download video using yt-dlp (for M3U8, streaming links)
@@ -130,8 +132,22 @@ async def download_video_ytdlp(
                 except Exception as e:
                     logger.debug(f"Progress hook error: {e}")
         
+        # Parse quality for dynamic format string logic
+        format_str = 'bestvideo+bestaudio/best'
+        if quality:
+            try:
+                # Extract numeric height (e.g. 720 from "720p")
+                h = int(''.join(filter(str.isdigit, quality)))
+                # Logic from reference: b[height<=h]/bv[height<=h]+ba/b/bv+ba
+                format_str = f"b[height<={h}]/bv[height<={h}]+ba/b/bv+ba"
+            except:
+                pass
+
+        # Reference User-Agent
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',
+            'format': format_str,
             'outtmpl': output_path,
             'merge_output_format': 'mp4',
             'quiet': True,
@@ -146,10 +162,16 @@ async def download_video_ytdlp(
             'hls_prefer_native': True,
             'progress_hooks': [progress_hook],
             'external_downloader': 'aria2c',
-            'external_downloader_args': ['-x', '16', '-j', '32']
+            'external_downloader_args': ['-x', '16', '-j', '32'],
+            'http_headers': {
+                'User-Agent': user_agent
+            }
         }
         
-        logger.info(f"🎬 Starting yt-dlp download...")
+        if extra_headers:
+            ydl_opts['http_headers'].update(extra_headers)
+
+        logger.info(f"🎬 Starting yt-dlp download (Quality: {quality or 'Best'})...")
         
         # Retry logic for specific domains to match reference capability
         # "visionias" and "penpencilvod" sometimes need explicit retries
@@ -252,7 +274,9 @@ async def download_video(
     url: str,
     filename: str,
     progress_msg: Optional[Message],
-    active: dict
+    active: dict,
+    quality: str = None,
+    extra_headers: dict = None
 ) -> Optional[str]:
     """
     Main video download function
@@ -285,7 +309,7 @@ async def download_video(
             result = await loop.run_in_executor(
                 None,
                 lambda: asyncio.run(download_video_ytdlp(
-                    url, output_path, progress_msg, active, download_progress
+                    url, output_path, progress_msg, active, download_progress, quality, extra_headers
                 ))
             )
             

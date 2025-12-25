@@ -13,6 +13,7 @@ from downloader import download_video, download_image, download_document
 from uploader import upload_video, upload_photo, upload_document, send_failed_link
 from video_processor import finalize_video, validate_video, get_video_duration, get_video_dimensions, generate_thumbnail
 from config import DOWNLOAD_DIR
+from url_helper import resolve_url
 import os
 import pytz
 
@@ -212,10 +213,18 @@ class BatchManager:
 
                     if item['type'] == 'video':
                         filename = sanitize_filename(item['title']) + '.mp4'
-                        raw_path = await download_video(
-                            item['url'], filename, prog,
-                            self.active_downloads[download_key]
-                        )
+
+                        # Resolve URL and get headers using reference logic
+                        resolved_url, extra_headers = resolve_url(item['url'], quality)
+
+                        if not resolved_url:
+                            raw_path = None
+                        else:
+                            raw_path = await download_video(
+                                resolved_url, filename, prog,
+                                self.active_downloads[download_key],
+                                quality=quality, extra_headers=extra_headers
+                            )
 
                         file_path = None
                         if raw_path and raw_path != 'FAILED':
