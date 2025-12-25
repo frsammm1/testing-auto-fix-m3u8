@@ -138,16 +138,21 @@ docker run -d \
    heroku create your-app-name
    ```
 
-3. **Set Config Vars:**
+ 3. **Add Buildpacks:**
+    - Go to Settings → Buildpacks
+    - Add these specific buildpacks URLS:
+      1. `https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git`
+      2. `https://github.com/heroku/heroku-buildpack-aria2.git`
+      3. `heroku/python` (Standard)
+
+ 4. **Set Config Vars:**
    - Go to Settings → Config Vars
    - Add: API_ID, API_HASH, BOT_TOKEN
 
-4. **Deploy:**
+ 5. **Deploy:**
    ```bash
    git push heroku main
    ```
-
-5. **FFmpeg is auto-installed via Dockerfile!**
 
 ## 📖 Usage Guide
 

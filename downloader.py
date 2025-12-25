@@ -98,10 +98,9 @@ async def download_direct_file(
         logger.error(f"❌ Download error: {e}")
         return None
 
-async def download_video_ytdlp(
+def download_video_ytdlp(
     url: str,
     output_path: str,
-    progress_msg: Optional[Message],
     active: dict,
     download_progress: dict
 ) -> Optional[str]:
@@ -145,7 +144,7 @@ async def download_video_ytdlp(
             ydl.download([url])
         
         # Wait for file to be fully written
-        await asyncio.sleep(2)
+        time.sleep(2)
         
         # Find output file
         if os.path.exists(output_path):
@@ -264,9 +263,9 @@ async def download_video(
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: asyncio.run(download_video_ytdlp(
-                    processed_url, output_path, progress_msg, active, download_progress
-                ))
+                lambda: download_video_ytdlp(
+                    processed_url, output_path, active, download_progress
+                )
             )
             
             if progress_msg:

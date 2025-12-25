@@ -5,6 +5,7 @@ WORKDIR /app
 
 # Install system dependencies including ffmpeg with ALL required libraries
 RUN apt-get update && apt-get install -y \
+    aria2 \
     ffmpeg \
     ffprobe \
     libavcodec-extra \
