@@ -304,7 +304,7 @@ def get_video_dimensions(filepath: str) -> Tuple[int, int]:
 def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> bool:
     """
     Generate thumbnail strictly from FINAL.mp4
-    Primary Method: ffmpeg -y -ss 00:00:03 -i FINAL.mp4 -frames:v 1 thumb.jpg
+    Primary Method: ffmpeg -i filename -ss 00:00:12 -vframes 1 thumb.jpg (from ref repo)
     """
     if not os.path.exists(video_path):
         return False
@@ -314,15 +314,13 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
     
     ffmpeg = get_ffmpeg_path()
     
-    # Method 1: Mandatory Try (Strict Instruction)
-    # ffmpeg -y -ss 00:00:03 -i FINAL.mp4 -frames:v 1 thumb.jpg
-    
+    # Method 1: From Reference Repo (offset 12s)
     try:
         cmd = [
             ffmpeg, '-y',
-            '-ss', '00:00:03',
             '-i', video_path,
-            '-frames:v', '1',
+            '-ss', '00:00:12',
+            '-vframes', '1',
             '-q:v', '2',
             thumb_path
         ]
@@ -342,12 +340,13 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
     except Exception as e:
         logger.debug(f"Primary thumbnail method failed: {e}")
 
-    # Method 2: Fallback (Try without seek if seek failed, or at 0s)
+    # Method 2: Fallback (Seek 3s)
     try:
         cmd = [
             ffmpeg, '-y',
+            '-ss', '00:00:03',
             '-i', video_path,
-            '-frames:v', '1',
+            '-vframes', '1',
             '-q:v', '2',
             thumb_path
         ]

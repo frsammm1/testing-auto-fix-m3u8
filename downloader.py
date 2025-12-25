@@ -11,6 +11,7 @@ from typing import Optional
 from pyrogram.types import Message
 from config import *
 from utils import format_size, format_time, create_progress_bar, is_youtube_url, is_mpd_url, safe_edit
+from url_helper import preprocess_url, get_ytdlp_args
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,8 @@ async def download_video_ytdlp(
     download_progress: dict
 ) -> Optional[str]:
     """
-    Download video using yt-dlp (for M3U8, streaming links)
+    Download video using yt-dlp (for M3U8, streaming links).
+    Expects 'url' to be already processed/direct link if extraction happened upstream.
     """
     try:
         def progress_hook(d):
@@ -130,24 +132,13 @@ async def download_video_ytdlp(
                 except Exception as e:
                     logger.debug(f"Progress hook error: {e}")
         
-        ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',
-            'outtmpl': output_path,
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'no_warnings': True,
-            'nocheckcertificate': True,
-            'concurrent_fragment_downloads': MAX_WORKERS,
-            'retries': MAX_RETRIES,
-            'fragment_retries': MAX_RETRIES,
-            'buffersize': CHUNK_SIZE,
-            'http_chunk_size': 10485760,
-            'hls_prefer_native': True,
-            'progress_hooks': [progress_hook],
-            'external_downloader': 'aria2c',
-            'external_downloader_args': ['-x', '16', '-k', '1M']
-        }
-        
+        # URL is assumed to be already processed by download_video
+        logger.info(f"🔗 Downloading URL: {url}")
+
+        # Get specialized args
+        ydl_opts = get_ytdlp_args(url, output_path)
+        ydl_opts['progress_hooks'] = [progress_hook]
+
         logger.info(f"🎬 Starting yt-dlp download...")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -236,17 +227,27 @@ async def download_video(
     output_path = str(DOWNLOAD_DIR / filename)
     
     try:
-        # Check if failed URL (YouTube, MPD)
-        if is_youtube_url(url) or is_mpd_url(url):
-            logger.info("❌ Failed URL detected (YouTube/MPD)")
-            return 'FAILED'
+        # Check if special PDF handling needed first
+        if "appx" in url and "pdf" in url:
+             processed_url = await preprocess_url(url)
+             return await download_direct_file(processed_url, output_path + ".pdf", progress_msg, active)
+
+        # Detect if streaming or direct (expanded logic)
+        # We now treat almost everything as a potential yt-dlp candidate if it's complex,
+        # but keep direct download for simple files.
+
+        # Allow YouTube and MPD now
         
-        # Detect if streaming or direct
         url_lower = url.lower()
-        is_stream = any(x in url_lower for x in ['.m3u8', '.ts', '/hls/', 'master.m3u8', 'index.m3u8'])
+        is_stream = any(x in url_lower for x in ['.m3u8', '.ts', '/hls/', 'master.m3u8', 'index.m3u8', 'youtube', 'youtu.be', 'brightcove', 'classplus', 'pw.live', 'visionias'])
         
-        if is_stream:
-            logger.info("📺 Streaming video detected (M3U8/HLS)")
+        # Also check if preprocessing changes the URL significantly (e.g. to an m3u8)
+        processed_url = await preprocess_url(url)
+        if processed_url != url and ('.m3u8' in processed_url or '.mpd' in processed_url):
+            is_stream = True
+
+        if is_stream or is_youtube_url(url) or is_mpd_url(url):
+            logger.info("📺 Streaming/Complex video detected")
             download_progress = {}
             
             # Start progress update task
@@ -256,11 +257,12 @@ async def download_video(
                 )
             
             # Download in executor to avoid blocking
+            # Pass the ALREADY PROCESSED url to download_video_ytdlp
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: asyncio.run(download_video_ytdlp(
-                    url, output_path, progress_msg, active, download_progress
+                    processed_url, output_path, progress_msg, active, download_progress
                 ))
             )
             
@@ -273,7 +275,7 @@ async def download_video(
             return result
         else:
             logger.info("🎬 Direct video download")
-            return await download_direct_file(url, output_path, progress_msg, active)
+            return await download_direct_file(processed_url, output_path, progress_msg, active)
         
     except Exception as e:
         logger.error(f"❌ Video download error: {e}")
