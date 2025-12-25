@@ -236,17 +236,20 @@ async def download_video(
         # We now treat almost everything as a potential yt-dlp candidate if it's complex,
         # but keep direct download for simple files.
 
-        # Allow YouTube and MPD now
+        # Check if failed URL (YouTube, MPD) - User wants manual failure for these
+        if is_youtube_url(url) or is_mpd_url(url):
+            logger.info("❌ Failed URL detected (YouTube/MPD)")
+            return 'FAILED'
         
         url_lower = url.lower()
-        is_stream = any(x in url_lower for x in ['.m3u8', '.ts', '/hls/', 'master.m3u8', 'index.m3u8', 'youtube', 'youtu.be', 'brightcove', 'classplus', 'pw.live', 'visionias'])
+        is_stream = any(x in url_lower for x in ['.m3u8', '.ts', '/hls/', 'master.m3u8', 'index.m3u8', 'brightcove', 'classplus', 'pw.live', 'visionias'])
         
         # Also check if preprocessing changes the URL significantly (e.g. to an m3u8)
         processed_url = await preprocess_url(url)
         if processed_url != url and ('.m3u8' in processed_url or '.mpd' in processed_url):
             is_stream = True
 
-        if is_stream or is_youtube_url(url) or is_mpd_url(url):
+        if is_stream:
             logger.info("📺 Streaming/Complex video detected")
             download_progress = {}
             
