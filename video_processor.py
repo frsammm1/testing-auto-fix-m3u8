@@ -36,7 +36,10 @@ def check_ffmpeg():
     if not ffmpeg_path:
         ffmpeg_path = shutil.which('ffmpeg')
     
+    # RELAXED CHECK: If we found a path, assume it works or try to verify
     if ffmpeg_path:
+        FFMPEG_AVAILABLE = True
+        os.environ['FFMPEG_PATH'] = ffmpeg_path
         try:
             result = subprocess.run(
                 [ffmpeg_path, '-version'], 
@@ -44,12 +47,10 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                FFMPEG_AVAILABLE = True
                 logger.info(f"✅ FFmpeg found at: {ffmpeg_path}")
-                os.environ['FFMPEG_PATH'] = ffmpeg_path
         except Exception as e:
-            logger.error(f"FFmpeg test failed: {e}")
-    
+            logger.warning(f"⚠️ FFmpeg found but version check failed: {e}")
+
     # Check ffprobe
     possible_probe_paths = [
         '/usr/bin/ffprobe',
@@ -67,7 +68,10 @@ def check_ffmpeg():
     if not ffprobe_path:
         ffprobe_path = shutil.which('ffprobe')
     
+    # RELAXED CHECK
     if ffprobe_path:
+        FFPROBE_AVAILABLE = True
+        os.environ['FFPROBE_PATH'] = ffprobe_path
         try:
             result = subprocess.run(
                 [ffprobe_path, '-version'],
@@ -75,11 +79,9 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                FFPROBE_AVAILABLE = True
                 logger.info(f"✅ FFprobe found at: {ffprobe_path}")
-                os.environ['FFPROBE_PATH'] = ffprobe_path
         except Exception as e:
-            logger.error(f"FFprobe test failed: {e}")
+            logger.warning(f"⚠️ FFprobe found but version check failed: {e}")
     
     if not FFMPEG_AVAILABLE:
         logger.warning("⚠️ FFmpeg NOT available - Finalization will fail")
@@ -104,27 +106,26 @@ def finalize_video(input_path: str) -> Optional[str]:
     """
     if not FFMPEG_AVAILABLE:
         logger.warning("⚠️ FFmpeg not available, skipping finalization")
-        # If no ffmpeg, just return input path if it exists, hoping it works
         if os.path.exists(input_path):
             return input_path
         return None
 
     ffmpeg = get_ffmpeg_path()
 
-    # Create final filename
     base_name = os.path.basename(input_path)
     name, _ = os.path.splitext(base_name)
     dir_path = os.path.dirname(input_path)
     final_path = os.path.join(dir_path, f"FINAL_{name}.mp4")
 
     try:
-        # 1. Primary Attempt: Standard Copy with Bitstream Filter
+        # 1. Primary Attempt: Standard Copy (Safer without forced bsf)
+        # yt-dlp's 'remux_video': 'mp4' should have already cleaned the container.
+        # This step acts as a sanity pass to ensure faststart and standard naming.
         cmd = [
             ffmpeg, '-y',
             '-i', input_path,
             '-map', '0',
             '-c', 'copy',
-            '-bsf:a', 'aac_adtstoasc',
             '-movflags', '+faststart',
             final_path
         ]
@@ -142,15 +143,15 @@ def finalize_video(input_path: str) -> Optional[str]:
              logger.info(f"✅ Finalization success (Mode 1)")
              return final_path
 
-        # 2. Fallback Attempt: Audio Transcode (Fixes codec issues causing segfaults)
-        logger.warning(f"⚠️ Finalization failed (RC: {result.returncode}). Retrying with audio transcode...")
+        # 2. Fallback Attempt: Audio Transcode with bsf (If Mode 1 failed)
+        logger.warning(f"⚠️ Finalization failed (RC: {result.returncode}). Retrying with bitstream filter...")
 
         cmd_fallback = [
             ffmpeg, '-y',
             '-i', input_path,
             '-map', '0',
-            '-c:v', 'copy',     # Copy video
-            '-c:a', 'aac',      # Re-encode audio to AAC
+            '-c', 'copy',
+            '-bsf:a', 'aac_adtstoasc',
             '-movflags', '+faststart',
             final_path
         ]
@@ -163,20 +164,41 @@ def finalize_video(input_path: str) -> Optional[str]:
         )
 
         if result_fb.returncode == 0 and os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
-             logger.info(f"✅ Finalization success (Mode 2 - Audio Transcode)")
+             logger.info(f"✅ Finalization success (Mode 2 - BSF)")
+             return final_path
+
+        # 3. Last Attempt: Full Re-encode of Audio
+        logger.warning(f"⚠️ Mode 2 failed. Retrying with audio transcode...")
+
+        cmd_aac = [
+            ffmpeg, '-y',
+            '-i', input_path,
+            '-map', '0',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-movflags', '+faststart',
+            final_path
+        ]
+
+        result_aac = subprocess.run(
+            cmd_aac,
+            capture_output=True,
+            timeout=1800,
+            env=os.environ.copy()
+        )
+
+        if result_aac.returncode == 0 and os.path.exists(final_path) and os.path.getsize(final_path) > 1024:
+             logger.info(f"✅ Finalization success (Mode 3 - Audio Transcode)")
              return final_path
 
         logger.error(f"❌ All finalization attempts failed. Last RC: {result_fb.returncode}")
 
-        # 3. Last Resort: Return original file if it exists and is not empty
-        # This prevents falling back to "Document" just because remux failed
         if os.path.exists(input_path) and os.path.getsize(input_path) > 1024:
             logger.warning("⚠️ Returning ORIGINAL file as finalization failed.")
             return input_path
 
     except Exception as e:
         logger.error(f"❌ Finalization error: {e}")
-        # Fallback to original
         if os.path.exists(input_path) and os.path.getsize(input_path) > 1024:
              return input_path
 
@@ -185,20 +207,15 @@ def finalize_video(input_path: str) -> Optional[str]:
 def validate_video(filepath: str) -> bool:
     """
     Relaxed validation.
-    1. Checks if file exists and has size.
-    2. Tries ffprobe.
-    3. Even if ffprobe fails/returns N/A duration, we ALLOW it if it's .mp4 and substantial size.
-    This fixes 'upload as document' issue for some m3u8 streams.
     """
     if not os.path.exists(filepath):
         return False
 
     size = os.path.getsize(filepath)
-    if size < 1024: # Less than 1KB is definitely junk
+    if size < 1024:
         return False
 
     if not FFPROBE_AVAILABLE:
-        # Trust the file if we can't probe it
         return True
 
     ffprobe = get_ffprobe_path()
@@ -221,9 +238,19 @@ def validate_video(filepath: str) -> bool:
 
         if result.returncode == 0:
             output = result.stdout.strip()
-            # If we got a valid number, great.
-            # If N/A, we still return True because it might be a live stream recording without duration metadata
             if output == 'N/A' or not output:
+                # Try secondary check (stream duration)
+                cmd2 = [
+                    ffprobe, '-v', 'error',
+                    '-select_streams', 'v:0',
+                    '-show_entries', 'stream=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    filepath
+                ]
+                result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=20, env=os.environ.copy())
+                if result2.returncode == 0 and result2.stdout.strip() and result2.stdout.strip() != 'N/A':
+                     return True
+
                 logger.warning(f"⚠️ Validation warning: Duration is N/A. Allowing anyway.")
                 return True
 
@@ -238,11 +265,8 @@ def validate_video(filepath: str) -> bool:
 
     except Exception as e:
         logger.error(f"❌ Validation error: {e}")
-        # If ffprobe crashed, we still trust the file exists
         return True
 
-    # If returncode != 0, it might be corrupt, but we can't be sure.
-    # Reference repo tries to upload anyway.
     return True
 
 def get_video_duration(filepath: str) -> int:
@@ -259,6 +283,7 @@ def get_video_duration(filepath: str) -> int:
     ffprobe = get_ffprobe_path()
     
     try:
+        # 1. Try Container Format Duration
         cmd = [
             ffprobe, '-v', 'error',
             '-show_entries', 'format=duration',
@@ -276,9 +301,39 @@ def get_video_duration(filepath: str) -> int:
         if result.returncode == 0 and result.stdout.strip():
             duration_str = result.stdout.strip()
             if duration_str and duration_str != 'N/A':
-                duration = float(duration_str)
-                if duration > 0 and duration == duration:
-                    return int(duration)
+                try:
+                    duration = float(duration_str)
+                    if duration > 0:
+                        return int(duration)
+                except:
+                    pass
+
+        # 2. Try Video Stream Duration
+        cmd_stream = [
+            ffprobe, '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            filepath
+        ]
+        result_stream = subprocess.run(
+            cmd_stream,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=os.environ.copy()
+        )
+
+        if result_stream.returncode == 0 and result_stream.stdout.strip():
+            duration_str = result_stream.stdout.strip()
+            if duration_str and duration_str != 'N/A':
+                try:
+                    duration = float(duration_str)
+                    if duration > 0:
+                        return int(duration)
+                except:
+                    pass
+
     except Exception as e:
         logger.debug(f"Duration check failed: {e}")
     
@@ -313,13 +368,16 @@ def get_video_dimensions(filepath: str) -> Tuple[int, int]:
             output = result.stdout.strip()
             if ',' in output:
                 w, h = output.split(',')
-                width = int(w)
-                height = int(h)
-                
-                if width > 0 and height > 0:
-                    width = width - (width % 2) if width % 2 else width
-                    height = height - (height % 2) if height % 2 else height
-                    return width, height
+                try:
+                    width = int(w)
+                    height = int(h)
+
+                    if width > 0 and height > 0:
+                        width = width - (width % 2) if width % 2 else width
+                        height = height - (height % 2) if height % 2 else height
+                        return width, height
+                except:
+                    pass
     except Exception as e:
         logger.debug(f"Dimensions extraction failed: {e}")
     
@@ -327,7 +385,7 @@ def get_video_dimensions(filepath: str) -> Tuple[int, int]:
 
 def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> bool:
     """
-    Generate thumbnail strictly from FINAL.mp4 at 12s
+    Generate thumbnail strictly from FINAL.mp4
     """
     if not os.path.exists(video_path):
         return False
@@ -343,7 +401,7 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
         if duration > 0 and duration < 12:
             seek_time = '00:00:01'
 
-        # Reference uses: ffmpeg -i "{filename}" -ss 00:00:12 -vframes 1 "{filename}.jpg"
+        # Attempt 1: Fast Seek (Before input)
         cmd = [
             ffmpeg, '-y',
             '-ss', seek_time,
@@ -360,15 +418,13 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
             env=os.environ.copy()
         )
 
-        if result.returncode == 0 and os.path.exists(thumb_path):
-            size = os.path.getsize(thumb_path)
-            if size > 1024:
-                logger.info("✅ Thumbnail generated (Primary Method)")
-                return True
+        if result.returncode == 0 and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 1024:
+            logger.info("✅ Thumbnail generated (Primary Method)")
+            return True
     except Exception as e:
         logger.debug(f"Primary thumbnail method failed: {e}")
 
-    # Fallback without seeking input first
+    # Attempt 2: Slow Seek (After input)
     try:
         cmd = [
             ffmpeg, '-y',
@@ -386,13 +442,36 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
             env=os.environ.copy()
         )
 
-        if result.returncode == 0 and os.path.exists(thumb_path):
-            size = os.path.getsize(thumb_path)
-            if size > 1024:
-                logger.info("✅ Thumbnail generated (Fallback Method)")
-                return True
+        if result.returncode == 0 and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 1024:
+            logger.info("✅ Thumbnail generated (Fallback Method)")
+            return True
     except Exception as e:
         logger.debug(f"Fallback thumbnail method failed: {e}")
+
+    # Attempt 3: Last Resort at 00:00:01
+    try:
+        logger.info("🔄 Trying last resort thumbnail at 1s...")
+        cmd = [
+            ffmpeg, '-y',
+            '-i', video_path,
+            '-ss', '00:00:01',
+            '-frames:v', '1',
+            '-q:v', '2',
+            thumb_path
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=30,
+            env=os.environ.copy()
+        )
+
+        if result.returncode == 0 and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 1024:
+            logger.info("✅ Thumbnail generated (Last Resort)")
+            return True
+    except Exception as e:
+        logger.debug(f"Last resort thumbnail failed: {e}")
 
     return False
 

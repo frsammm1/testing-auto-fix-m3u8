@@ -166,6 +166,7 @@ async def download_video_ytdlp(
             'progress_hooks': [progress_hook],
             'external_downloader': 'aria2c',
             'external_downloader_args': ['-x', '16', '-j', '32'],
+            'remux_video': 'mp4',
             'http_headers': {
                 'User-Agent': user_agent
             }
