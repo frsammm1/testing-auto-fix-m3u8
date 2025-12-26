@@ -102,10 +102,13 @@ async def download_video_ytdlp(
     output_path: str,
     progress_msg: Optional[Message],
     active: dict,
-    download_progress: dict
+    download_progress: dict,
+    quality: str = None,
+    extra_headers: dict = None
 ) -> Optional[str]:
     """
     Download video using yt-dlp (for M3U8, streaming links)
+    Uses Aria2c with specific arguments matched to reference repo.
     """
     try:
         def progress_hook(d):
@@ -130,28 +133,70 @@ async def download_video_ytdlp(
                 except Exception as e:
                     logger.debug(f"Progress hook error: {e}")
         
+        # Parse quality for dynamic format string logic
+        format_str = 'bestvideo+bestaudio/best'
+        if quality:
+            try:
+                # Extract numeric height (e.g. 720 from "720p")
+                h = int(''.join(filter(str.isdigit, quality)))
+                # Logic from reference: b[height<=h]/bv[height<=h]+ba/b/bv+ba
+                format_str = f"b[height<={h}]/bv[height<={h}]+ba/b/bv+ba"
+            except:
+                pass
+
+        # Reference User-Agent
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',
+            'format': format_str,
             'outtmpl': output_path,
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
             'concurrent_fragment_downloads': MAX_WORKERS,
-            'retries': MAX_RETRIES,
-            'fragment_retries': MAX_RETRIES,
+            'retries': 25, # Matched to reference repo -R 25
+            'fragment_retries': 25, # Matched to reference repo --fragment-retries 25
+            'socket_timeout': 50,
             'buffersize': CHUNK_SIZE,
             'http_chunk_size': 10485760,
             'hls_prefer_native': True,
             'progress_hooks': [progress_hook],
             'external_downloader': 'aria2c',
-            'external_downloader_args': ['-x', '16', '-k', '1M']
+            'external_downloader_args': ['-x', '16', '-j', '32'],
+            'http_headers': {
+                'User-Agent': user_agent
+            }
         }
         
-        logger.info(f"🎬 Starting yt-dlp download...")
+        if extra_headers:
+            ydl_opts['http_headers'].update(extra_headers)
+
+        logger.info(f"🎬 Starting yt-dlp download (Quality: {quality or 'Best'})...")
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        # Retry logic for specific domains to match reference capability
+        max_external_retries = 10 if any(x in url for x in ['visionias', 'penpencilvod']) else 1
+
+        last_error = None
+        for attempt in range(max_external_retries):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+
+                # If download successful, break loop
+                last_error = None
+                break
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_external_retries - 1:
+                    logger.warning(f"⚠️ Download failed (Attempt {attempt+1}/{max_external_retries}), retrying in 5s: {e}")
+                    await asyncio.sleep(5)
+                else:
+                    logger.error(f"❌ yt-dlp error after {max_external_retries} attempts: {e}")
+
+        if last_error and not os.path.exists(output_path):
+             return None
         
         # Wait for file to be fully written
         await asyncio.sleep(2)
@@ -227,7 +272,9 @@ async def download_video(
     url: str,
     filename: str,
     progress_msg: Optional[Message],
-    active: dict
+    active: dict,
+    quality: str = None,
+    extra_headers: dict = None
 ) -> Optional[str]:
     """
     Main video download function
@@ -260,7 +307,7 @@ async def download_video(
             result = await loop.run_in_executor(
                 None,
                 lambda: asyncio.run(download_video_ytdlp(
-                    url, output_path, progress_msg, active, download_progress
+                    url, output_path, progress_msg, active, download_progress, quality, extra_headers
                 ))
             )
             

@@ -9,6 +9,7 @@ from utils import parse_txt_content, count_content_types, is_failed_url, safe_re
 from downloader import download_video, download_image, download_document
 from uploader import upload_video, upload_photo, upload_document, send_failed_link
 from video_processor import finalize_video, validate_video, get_video_duration, get_video_dimensions, generate_thumbnail
+from url_helper import resolve_url
 
 logger = logging.getLogger(__name__)
 
@@ -274,9 +275,17 @@ async def process_items(
 
             if item['type'] == 'video':
                 filename = sanitize_filename(item['title']) + '.mp4'
-                raw_path = await download_video(
-                    item['url'], filename, prog, active_downloads[user_id]
-                )
+
+                # Resolve URL and get headers using reference logic
+                resolved_url, extra_headers = resolve_url(item['url'], quality)
+
+                if not resolved_url:
+                    raw_path = None
+                else:
+                    raw_path = await download_video(
+                        resolved_url, filename, prog, active_downloads[user_id],
+                        quality=quality, extra_headers=extra_headers
+                    )
 
                 if raw_path and raw_path != 'FAILED':
                      # PIPELINE STEP 1: Finalize (Mandatory)
