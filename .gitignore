@@ -68,3 +68,4 @@ dist/
 # Backup
 *.json
 bot_backup.json
+ffmpeg-*-amd64-static/
