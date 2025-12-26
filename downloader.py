@@ -108,6 +108,7 @@ async def download_video_ytdlp(
 ) -> Optional[str]:
     """
     Download video using yt-dlp (for M3U8, streaming links)
+    Uses Aria2c with specific arguments matched to reference repo.
     """
     try:
         def progress_hook(d):
@@ -154,8 +155,8 @@ async def download_video_ytdlp(
             'no_warnings': True,
             'nocheckcertificate': True,
             'concurrent_fragment_downloads': MAX_WORKERS,
-            'retries': float('inf'),
-            'fragment_retries': 25,
+            'retries': 25, # Matched to reference repo -R 25
+            'fragment_retries': 25, # Matched to reference repo --fragment-retries 25
             'socket_timeout': 50,
             'buffersize': CHUNK_SIZE,
             'http_chunk_size': 10485760,
@@ -174,8 +175,6 @@ async def download_video_ytdlp(
         logger.info(f"🎬 Starting yt-dlp download (Quality: {quality or 'Best'})...")
         
         # Retry logic for specific domains to match reference capability
-        # "visionias" and "penpencilvod" sometimes need explicit retries
-        # Reference uses up to 10 retries with 5s sleep
         max_external_retries = 10 if any(x in url for x in ['visionias', 'penpencilvod']) else 1
 
         last_error = None
@@ -197,7 +196,6 @@ async def download_video_ytdlp(
                     logger.error(f"❌ yt-dlp error after {max_external_retries} attempts: {e}")
 
         if last_error and not os.path.exists(output_path):
-             # If completely failed and no file, return None
              return None
         
         # Wait for file to be fully written
