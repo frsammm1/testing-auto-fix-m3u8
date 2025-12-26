@@ -8,7 +8,7 @@ from pyrogram import Client
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from utils import format_size, format_time, create_progress_bar, safe_edit, safe_send
-from video_processor import split_video_file, get_video_metadata, generate_thumbnail
+from video_processor import split_video_file, get_video_metadata, generate_thumbnail, get_video_duration
 from config import UPLOAD_CHUNK_SIZE, SAFE_SPLIT_SIZE, DOWNLOAD_DIR, PROGRESS_UPDATE_INTERVAL
 
 logger = logging.getLogger(__name__)
