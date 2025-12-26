@@ -9,3 +9,7 @@ pytz==2024.1
 requests
 m3u8
 cloudscraper
+bs4
+beautifulsoup4
+pywidevine
+ffmpeg-python

@@ -327,7 +327,7 @@ def get_video_dimensions(filepath: str) -> Tuple[int, int]:
 
 def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> bool:
     """
-    Generate thumbnail strictly from FINAL.mp4
+    Generate thumbnail strictly from FINAL.mp4 at 12s
     """
     if not os.path.exists(video_path):
         return False
@@ -343,6 +343,7 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
         if duration > 0 and duration < 12:
             seek_time = '00:00:01'
 
+        # Reference uses: ffmpeg -i "{filename}" -ss 00:00:12 -vframes 1 "{filename}.jpg"
         cmd = [
             ffmpeg, '-y',
             '-ss', seek_time,
@@ -367,11 +368,12 @@ def generate_thumbnail(video_path: str, thumb_path: str, duration: int = 0) -> b
     except Exception as e:
         logger.debug(f"Primary thumbnail method failed: {e}")
 
-    # Fallback
+    # Fallback without seeking input first
     try:
         cmd = [
             ffmpeg, '-y',
             '-i', video_path,
+            '-ss', seek_time,
             '-frames:v', '1',
             '-q:v', '2',
             thumb_path
