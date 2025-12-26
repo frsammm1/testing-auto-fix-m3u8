@@ -4,9 +4,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies including ffmpeg with ALL required libraries
+# Note: 'ffprobe' is included in 'ffmpeg' package in Debian repositories
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    ffprobe \
     aria2 \
     libavcodec-extra \
     libavformat-dev \

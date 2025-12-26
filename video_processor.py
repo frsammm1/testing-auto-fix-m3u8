@@ -36,9 +36,8 @@ def check_ffmpeg():
     if not ffmpeg_path:
         ffmpeg_path = shutil.which('ffmpeg')
     
-    # RELAXED CHECK: If we found a path, assume it works or try to verify
+    # STRICT CHECK: Only mark available if execution succeeds
     if ffmpeg_path:
-        FFMPEG_AVAILABLE = True
         os.environ['FFMPEG_PATH'] = ffmpeg_path
         try:
             result = subprocess.run(
@@ -47,9 +46,12 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                logger.info(f"✅ FFmpeg found at: {ffmpeg_path}")
+                FFMPEG_AVAILABLE = True
+                logger.info(f"✅ FFmpeg found and verified at: {ffmpeg_path}")
+            else:
+                logger.warning(f"⚠️ FFmpeg found at {ffmpeg_path} but returned non-zero exit code")
         except Exception as e:
-            logger.warning(f"⚠️ FFmpeg found but version check failed: {e}")
+            logger.warning(f"⚠️ FFmpeg found but execution failed: {e}")
 
     # Check ffprobe
     possible_probe_paths = [
@@ -68,9 +70,8 @@ def check_ffmpeg():
     if not ffprobe_path:
         ffprobe_path = shutil.which('ffprobe')
     
-    # RELAXED CHECK
+    # STRICT CHECK
     if ffprobe_path:
-        FFPROBE_AVAILABLE = True
         os.environ['FFPROBE_PATH'] = ffprobe_path
         try:
             result = subprocess.run(
@@ -79,9 +80,12 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                logger.info(f"✅ FFprobe found at: {ffprobe_path}")
+                FFPROBE_AVAILABLE = True
+                logger.info(f"✅ FFprobe found and verified at: {ffprobe_path}")
+            else:
+                logger.warning(f"⚠️ FFprobe found at {ffprobe_path} but returned non-zero exit code")
         except Exception as e:
-            logger.warning(f"⚠️ FFprobe found but version check failed: {e}")
+            logger.warning(f"⚠️ FFprobe found but execution failed: {e}")
     
     if not FFMPEG_AVAILABLE:
         logger.warning("⚠️ FFmpeg NOT available - Finalization will fail")
@@ -271,71 +275,98 @@ def validate_video(filepath: str) -> bool:
 
 def get_video_duration(filepath: str) -> int:
     """
-    Get video duration strictly using ffprobe.
+    Get video duration strictly using ffprobe with ffmpeg fallback.
     Returns 0 if failed/invalid.
     """
     if not os.path.exists(filepath):
         return 0
 
-    if not FFPROBE_AVAILABLE:
-        return 0
+    # Attempt 1: FFprobe
+    if FFPROBE_AVAILABLE:
+        ffprobe = get_ffprobe_path()
+        try:
+            # 1. Try Container Format Duration
+            cmd = [
+                ffprobe, '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                filepath
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=os.environ.copy()
+            )
 
-    ffprobe = get_ffprobe_path()
-    
-    try:
-        # 1. Try Container Format Duration
-        cmd = [
-            ffprobe, '-v', 'error',
-            '-show_entries', 'format=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            filepath
-        ]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=os.environ.copy()
-        )
-        
-        if result.returncode == 0 and result.stdout.strip():
-            duration_str = result.stdout.strip()
-            if duration_str and duration_str != 'N/A':
-                try:
-                    duration = float(duration_str)
-                    if duration > 0:
-                        return int(duration)
-                except:
-                    pass
+            if result.returncode == 0 and result.stdout.strip():
+                duration_str = result.stdout.strip()
+                if duration_str and duration_str != 'N/A':
+                    try:
+                        d = float(duration_str)
+                        if d > 0:
+                            return int(d)
+                    except:
+                        pass
 
-        # 2. Try Video Stream Duration
-        cmd_stream = [
-            ffprobe, '-v', 'error',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            filepath
-        ]
-        result_stream = subprocess.run(
-            cmd_stream,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=os.environ.copy()
-        )
+            # 2. Try Video Stream Duration
+            cmd_stream = [
+                ffprobe, '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                filepath
+            ]
+            result_stream = subprocess.run(
+                cmd_stream,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=os.environ.copy()
+            )
 
-        if result_stream.returncode == 0 and result_stream.stdout.strip():
-            duration_str = result_stream.stdout.strip()
-            if duration_str and duration_str != 'N/A':
-                try:
-                    duration = float(duration_str)
-                    if duration > 0:
-                        return int(duration)
-                except:
-                    pass
+            if result_stream.returncode == 0 and result_stream.stdout.strip():
+                duration_str = result_stream.stdout.strip()
+                if duration_str and duration_str != 'N/A':
+                    try:
+                        d = float(duration_str)
+                        if d > 0:
+                            return int(d)
+                    except:
+                        pass
 
-    except Exception as e:
-        logger.debug(f"Duration check failed: {e}")
+        except Exception as e:
+            logger.debug(f"FFprobe duration check failed: {e}")
+
+    # Attempt 2: FFmpeg Fallback
+    if FFMPEG_AVAILABLE:
+        try:
+            ffmpeg = get_ffmpeg_path()
+            cmd = [ffmpeg, '-i', filepath]
+            # ffmpeg -i exits with 1 as no output is specified, but prints info to stderr
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=os.environ.copy()
+            )
+
+            # Parse stderr for "Duration: HH:MM:SS.mm"
+            import re
+            output = result.stderr
+            match = re.search(r"Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d+)", output)
+            if match:
+                hours = int(match.group(1))
+                minutes = int(match.group(2))
+                seconds = int(match.group(3))
+                total_seconds = hours * 3600 + minutes * 60 + seconds
+                if total_seconds > 0:
+                    logger.info(f"✅ Recovered duration from FFmpeg: {total_seconds}s")
+                    return total_seconds
+        except Exception as e:
+            logger.debug(f"FFmpeg fallback duration check failed: {e}")
     
     return 0
 
