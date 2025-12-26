@@ -91,6 +91,12 @@ async def upload_video(
             width = metadata['width']
             height = metadata['height']
 
+        # Double check duration - if still 0, try one more time
+        if duration == 0:
+            logger.info("⚠️ Duration is 0, attempting forced recalculation...")
+            duration = get_video_duration(video_path)
+            logger.info(f"🔄 Recalculated duration: {duration}")
+
         # Generate thumbnail if missing (Reference repo style: 12th second)
         if not thumb_path or not os.path.exists(thumb_path):
              gen_thumb_path = str(DOWNLOAD_DIR / f"thumb_{os.getpid()}_{int(time.time())}.jpg")
@@ -98,6 +104,7 @@ async def upload_video(
              if generate_thumbnail(video_path, gen_thumb_path, duration):
                  thumb_path = gen_thumb_path
              else:
+                 logger.warning(f"⚠️ Thumbnail generation failed for {video_path}")
                  thumb_path = None
 
         # Check if split needed
