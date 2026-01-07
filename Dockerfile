@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     ffprobe \
+    aria2 \
     libavcodec-extra \
     libavformat-dev \
     libavutil-dev \

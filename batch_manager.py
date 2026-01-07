@@ -13,6 +13,7 @@ from downloader import download_video, download_image, download_document
 from uploader import upload_video, upload_photo, upload_document, send_failed_link
 from video_processor import finalize_video, validate_video, get_video_duration, get_video_dimensions, generate_thumbnail
 from config import DOWNLOAD_DIR
+from url_helper import process_url, is_youtube_url, is_mpd_url
 import os
 import pytz
 
@@ -84,6 +85,7 @@ class BatchManager:
                 rows = await cursor.fetchall()
                 for row in rows:
                     url = row[0]
+                    # Don't retry YouTube/MPD as they will fail again
                     if not is_youtube_url(url) and not is_mpd_url(url):
                         failed_urls.append(url)
         
@@ -188,14 +190,21 @@ class BatchManager:
                         pass
                 
                 try:
-                    # YouTube/MPD handling
+                    # YouTube/MPD handling via url_helper
+                    # We check raw url first
                     if is_youtube_url(item['url']) or is_mpd_url(item['url']):
                         await send_failed_link(
                             self.client, destination,
                             item['title'], item['url'], idx, item['type']
                         )
+                        # Mark as success? Or failed?
+                        # User says: "failed manual link wala msg badhiya tha... unke liye failed manual link..."
+                        # So mark as 'success' so it doesn't retry?
+                        # Or 'failed' so it retries?
+                        # If we successfully send the "manual link message", we should probably mark it as 'success'
+                        # to avoid spamming the channel with the same manual link message on every refresh.
                         await db.mark_content_sent(batch_id, destination, item['title'], item['url'], 'success')
-                        failed += 1
+                        failed += 1 # It technically failed to upload media, but we handled it.
                         if prog:
                             await prog.delete()
                         continue
@@ -212,12 +221,17 @@ class BatchManager:
 
                     if item['type'] == 'video':
                         filename = sanitize_filename(item['title']) + '.mp4'
+
+                        # Note: `download_video` in `downloader.py` internally calls `process_url` from `url_helper.py`.
+                        # We don't need to call it here manually unless we need to inspect it.
+                        # `downloader.py` handles extraction, headers, yt-dlp options etc.
+
                         raw_path = await download_video(
                             item['url'], filename, prog,
-                            self.active_downloads[download_key]
+                            self.active_downloads[download_key],
+                            quality=quality
                         )
 
-                        file_path = None
                         if raw_path and raw_path != 'FAILED':
                             # PIPELINE STEP 1: Finalize (Mandatory)
                             logger.info(f"🎞️ Strict Pipeline: Finalizing {filename}...")
@@ -239,22 +253,23 @@ class BatchManager:
                                         thumb_path = generated_thumb_path
 
                                     # Clean up raw path as we have successful final
-                                    try:
-                                        os.remove(raw_path)
-                                    except:
-                                        pass
+                                    if raw_path != final_path:
+                                        try:
+                                            os.remove(raw_path)
+                                        except:
+                                            pass
                                 else:
                                     logger.warning(f"❌ Validation failed for {filename}. Fallback to Document.")
                                     item['type'] = 'document'
-                                    file_path = raw_path
-                                    try:
-                                        os.remove(final_path)
-                                    except:
-                                        pass
+                                    file_path = final_path if os.path.exists(final_path) else raw_path
                             else:
                                 logger.warning(f"❌ Finalization failed for {filename}. Fallback to Document.")
                                 item['type'] = 'document'
                                 file_path = raw_path
+
+                        elif raw_path == 'FAILED':
+                            # Should trigger manual link
+                            file_path = 'FAILED'
 
                         download_success = file_path and file_path != 'FAILED'
                     

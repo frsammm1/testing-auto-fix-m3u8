@@ -5,7 +5,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from config import DOWNLOAD_DIR, QUALITY_PRESETS
 from database import db
-from utils import parse_txt_content, count_content_types, is_failed_url, safe_reply, safe_edit, safe_answer
+from utils import parse_txt_content, count_content_types, is_failed_url, safe_reply, safe_edit, safe_answer, sanitize_filename
 from downloader import download_video, download_image, download_document
 from uploader import upload_video, upload_photo, upload_document, send_failed_link
 from video_processor import finalize_video, validate_video, get_video_duration, get_video_dimensions, generate_thumbnail
@@ -274,8 +274,12 @@ async def process_items(
 
             if item['type'] == 'video':
                 filename = sanitize_filename(item['title']) + '.mp4'
+
+                # Use internal resolution in downloader
+                # Note: No 'resolve_url' here, downloader handles it
                 raw_path = await download_video(
-                    item['url'], filename, prog, active_downloads[user_id]
+                    item['url'], filename, prog, active_downloads[user_id],
+                    quality=quality
                 )
 
                 if raw_path and raw_path != 'FAILED':
@@ -297,23 +301,22 @@ async def process_items(
                             if generate_thumbnail(final_path, generated_thumb_path, video_duration):
                                 thumb_path = generated_thumb_path
 
-                            try:
-                                os.remove(raw_path)
-                            except:
-                                pass
+                            # Cleanup raw path if different
+                            if raw_path != final_path:
+                                try:
+                                    os.remove(raw_path)
+                                except:
+                                    pass
                         else:
                             logger.warning("❌ Validation failed. Fallback to Document.")
                             item['type'] = 'document'
-                            file_path = raw_path
-                            try:
-                                os.remove(final_path)
-                            except:
-                                pass
+                            file_path = final_path if os.path.exists(final_path) else raw_path
                     else:
                         logger.warning("❌ Finalization failed. Fallback to Document.")
                         item['type'] = 'document'
                         file_path = raw_path
                 else:
+                    # If download returned FAILED or None, file_path remains None or FAILED
                     file_path = raw_path
 
             elif item['type'] == 'image':
