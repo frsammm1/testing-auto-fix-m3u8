@@ -6,6 +6,7 @@ import aiofiles
 import yt_dlp
 import logging
 import time
+import json
 from pathlib import Path
 from typing import Optional
 from pyrogram.types import Message
@@ -167,6 +168,7 @@ async def download_video_ytdlp(
             'external_downloader': 'aria2c',
             'external_downloader_args': ['-x', '16', '-j', '32'],
             'remux_video': 'mp4',
+            'writethumbnail': True,
             'http_headers': {
                 'User-Agent': user_agent
             }
@@ -184,7 +186,46 @@ async def download_video_ytdlp(
         for attempt in range(max_external_retries):
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    info = ydl.extract_info(url, download=True)
+
+                    # Extract and save metadata
+                    if info:
+                        metadata = {
+                            'duration': info.get('duration', 0),
+                            'width': info.get('width', 0),
+                            'height': info.get('height', 0),
+                            'thumbnail': info.get('thumbnail')
+                        }
+
+                        # Save metadata to sidecar file
+                        meta_path = output_path + ".meta"
+                        try:
+                            with open(meta_path, 'w') as f:
+                                json.dump(metadata, f)
+                            logger.info(f"💾 Metadata saved to {meta_path}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save metadata: {e}")
+
+                        # Handle thumbnail
+                        # yt-dlp might have written the thumbnail to disk.
+                        # It usually writes it as filename.jpg/webp
+                        base_path = os.path.splitext(output_path)[0]
+                        possible_thumbs = [
+                            base_path + ".jpg",
+                            base_path + ".webp",
+                            base_path + ".png"
+                        ]
+
+                        for thumb in possible_thumbs:
+                            if os.path.exists(thumb):
+                                # Rename to deterministic path
+                                final_thumb = output_path + ".thumb"
+                                if os.path.exists(final_thumb):
+                                    os.remove(final_thumb)
+                                os.rename(thumb, final_thumb)
+                                logger.info(f"🖼️ Thumbnail saved to {final_thumb}")
+                                break
+
                 last_error = None
                 break
             except Exception as e:

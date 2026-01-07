@@ -2,13 +2,14 @@ import os
 import asyncio
 import logging
 import time
+import json
 from pathlib import Path
 from typing import Optional, List, Union
 from pyrogram import Client
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from utils import format_size, format_time, create_progress_bar, safe_edit, safe_send
-from video_processor import split_video_file, get_video_metadata, generate_thumbnail
+from video_processor import split_video_file, get_video_metadata, generate_thumbnail, get_video_duration
 from config import UPLOAD_CHUNK_SIZE, SAFE_SPLIT_SIZE, DOWNLOAD_DIR, PROGRESS_UPDATE_INTERVAL
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,21 @@ async def upload_video(
              return False
 
         file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+
+        # Check for sidecar metadata (extracted by yt-dlp)
+        meta_path = video_path + ".meta"
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r') as f:
+                    metadata = json.load(f)
+                    if duration == 0: duration = metadata.get('duration', 0)
+                    if width == 0: width = metadata.get('width', 0)
+                    if height == 0: height = metadata.get('height', 0)
+                logger.info(f"✅ Loaded sidecar metadata: D={duration}, {width}x{height}")
+                # Clean up meta file
+                os.remove(meta_path)
+            except Exception as e:
+                logger.error(f"❌ Failed to load sidecar metadata: {e}")
         
         # Calculate metadata if missing (Reference repo style)
         if duration == 0 or width == 0 or height == 0:
@@ -91,6 +107,19 @@ async def upload_video(
             width = metadata['width']
             height = metadata['height']
 
+        # Double check duration - if still 0, try one more time
+        if duration == 0:
+            logger.info("⚠️ Duration is 0, attempting forced recalculation...")
+            duration = get_video_duration(video_path)
+            logger.info(f"🔄 Recalculated duration: {duration}")
+
+        # Check for sidecar thumbnail
+        if not thumb_path or not os.path.exists(thumb_path):
+            sidecar_thumb = video_path + ".thumb"
+            if os.path.exists(sidecar_thumb):
+                thumb_path = sidecar_thumb
+                logger.info(f"✅ Found sidecar thumbnail: {thumb_path}")
+
         # Generate thumbnail if missing (Reference repo style: 12th second)
         if not thumb_path or not os.path.exists(thumb_path):
              gen_thumb_path = str(DOWNLOAD_DIR / f"thumb_{os.getpid()}_{int(time.time())}.jpg")
@@ -98,6 +127,7 @@ async def upload_video(
              if generate_thumbnail(video_path, gen_thumb_path, duration):
                  thumb_path = gen_thumb_path
              else:
+                 logger.warning(f"⚠️ Thumbnail generation failed for {video_path}")
                  thumb_path = None
 
         # Check if split needed

@@ -40,6 +40,7 @@ def check_ffmpeg():
     if ffmpeg_path:
         FFMPEG_AVAILABLE = True
         os.environ['FFMPEG_PATH'] = ffmpeg_path
+        logger.info(f"🎥 FFmpeg set to: {ffmpeg_path}")
         try:
             result = subprocess.run(
                 [ffmpeg_path, '-version'], 
@@ -47,7 +48,9 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                logger.info(f"✅ FFmpeg found at: {ffmpeg_path}")
+                logger.info(f"✅ FFmpeg verified at: {ffmpeg_path}")
+            else:
+                logger.warning(f"⚠️ FFmpeg version check returned non-zero: {result.returncode}")
         except Exception as e:
             logger.warning(f"⚠️ FFmpeg found but version check failed: {e}")
 
@@ -72,6 +75,7 @@ def check_ffmpeg():
     if ffprobe_path:
         FFPROBE_AVAILABLE = True
         os.environ['FFPROBE_PATH'] = ffprobe_path
+        logger.info(f"🎥 FFprobe set to: {ffprobe_path}")
         try:
             result = subprocess.run(
                 [ffprobe_path, '-version'],
@@ -79,7 +83,9 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                logger.info(f"✅ FFprobe found at: {ffprobe_path}")
+                logger.info(f"✅ FFprobe verified at: {ffprobe_path}")
+            else:
+                logger.warning(f"⚠️ FFprobe version check returned non-zero: {result.returncode}")
         except Exception as e:
             logger.warning(f"⚠️ FFprobe found but version check failed: {e}")
     
@@ -336,6 +342,38 @@ def get_video_duration(filepath: str) -> int:
 
     except Exception as e:
         logger.debug(f"Duration check failed: {e}")
+
+    # 3. Fallback: Parse ffmpeg -i output if ffprobe failed/missing
+    # This is useful when ffprobe is missing or fails but ffmpeg works
+    if FFMPEG_AVAILABLE:
+        try:
+            ffmpeg = get_ffmpeg_path()
+            cmd_ffmpeg = [ffmpeg, '-i', filepath]
+
+            # ffmpeg -i usually writes to stderr and exits with 1 if no output file
+            result = subprocess.run(
+                cmd_ffmpeg,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=os.environ.copy()
+            )
+
+            # We look at stderr regardless of return code
+            output = result.stderr
+            if output:
+                import re
+                # Pattern: Duration: 00:00:00.00
+                match = re.search(r'Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d+)', output)
+                if match:
+                    hours, minutes, seconds = match.groups()
+                    total_seconds = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                    if total_seconds > 0:
+                        logger.info(f"✅ Duration extracted via FFmpeg fallback: {total_seconds}")
+                        return int(total_seconds)
+
+        except Exception as e:
+            logger.debug(f"FFmpeg fallback duration check failed: {e}")
     
     return 0
 
